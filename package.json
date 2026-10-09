@@ -1,0 +1,25 @@
+{
+  "name": "couchdb-node",
+  "version": "0.3.0",
+  "description": "TypeScript SDK for Apache CouchDB",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "conformance": "bash scripts/conformance.sh",
+    "prepublishOnly": "node scripts/sync-version.mjs --check && npm run build"
+  },
+  "devDependencies": {
+    "@getgauge/cli": "^1.6.38",
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  }
+}
