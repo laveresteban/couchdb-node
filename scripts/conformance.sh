@@ -12,6 +12,8 @@ cd "$root/conformance"
 rm -rf specs && cp -r "$specs" specs
 
 gauge() { npx --yes @getgauge/cli@1.6.38 "$@"; }
-gauge install ts >/dev/null 2>&1 || true
+(cd "$root" && npm ci --silent)
+npm ci --silent
+gauge install ts >/dev/null
 gauge install html-report >/dev/null 2>&1 || true
 gauge run specs "$@"
