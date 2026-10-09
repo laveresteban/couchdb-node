@@ -31,6 +31,16 @@ export class CouchDB {
           if (!session.cookie) return;
           return { url, init: { ...init, headers: { ...(init.headers as Record<string, string>), Cookie: session.cookie } } };
         },
+        // CouchDB re-issues Set-Cookie to extend the session; keep the latest non-empty one.
+        async post({ response }) {
+          const h = response.headers;
+          const all = h.getSetCookie?.() ?? [h.get("set-cookie")];
+          for (const c of all) {
+            const kv = c?.split(";", 1)[0];
+            if (kv?.startsWith("AuthSession=") && kv.length > "AuthSession=".length) session.cookie = kv;
+          }
+          return response;
+        },
       }],
     });
     this.server = new ServerApi(this.config);
@@ -100,7 +110,7 @@ export class CouchDB {
   // -- replication
   private endpoint(x: string): Doc {
     if (x.includes("://")) return { url: x };
-    const ep: Doc = { url: `${this.basePath}/${x}` };
+    const ep: Doc = { url: `${this.basePath}/${encodeURIComponent(x)}` };
     if (this.username) ep.auth = { basic: { username: this.username, password: this.password } };
     return ep;
   }

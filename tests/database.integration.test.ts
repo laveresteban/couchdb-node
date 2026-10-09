@@ -33,6 +33,19 @@ describe.skipIf(!up)("Database (live CouchDB)", () => {
     expect(await db.exists()).toBe(true);
   });
 
+  it("writes the user doc verbatim (no alias pollution/clobbering)", async () => {
+    const db = await mkdb();
+    await db.save({ _id: "x", id: "mine", rev: "r", n: 1 });
+    const got = await db.get("x");
+    expect(got.id).toBe("mine");
+    expect(got.rev).toBe("r");
+    expect(got.n).toBe(1);
+    await db.save({ _id: "y" });
+    expect(await db.get("y")).not.toHaveProperty("id");
+    await db.bulkSave([{ _id: "z", id: "b" }]);
+    expect((await db.get("z")).id).toBe("b");
+  });
+
   it("stale-rev save rejects with Conflict", async () => {
     const db = await mkdb();
     const doc = await db.save({ _id: "a", n: 1 });

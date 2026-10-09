@@ -1,4 +1,5 @@
 import { CouchDBError, NotFound } from "./errors";
+import type { ChangesOptions } from "./database";
 import type { Change, ChangesResult, Doc } from "./types";
 
 /** The slice of Database that ChangesFeed needs (avoids a circular import). */
@@ -11,7 +12,7 @@ export interface ChangesSource {
 /** Network errors, 429 and 5xx are worth retrying; other errors are not. */
 export function isTransient(err: unknown): boolean {
   if (err instanceof CouchDBError) return err.status === 0 || err.status === 429 || err.status >= 500;
-  return err instanceof TypeError || (err as any)?.name === "FetchError";
+  return (err as any)?.name === "FetchError";
 }
 
 /** Seconds from a `Retry-After` header, if the server sent one. */
@@ -20,7 +21,8 @@ export function retryAfter(err: unknown): number | undefined {
   return Number.isFinite(v) ? v : undefined;
 }
 
-export interface ChangesFeedOptions {
+/** Changes query params (camelCase, e.g. `includeDocs`) plus feed-control fields. */
+export type ChangesFeedOptions = Omit<ChangesOptions, "since" | "timeout" | "limit" | "feed"> & {
   since?: string;
   checkpoint?: string;
   timeout?: number;
@@ -28,8 +30,7 @@ export interface ChangesFeedOptions {
   maxRetries?: number;
   maxBackoff?: number;
   sleep?: (ms: number) => Promise<void>;
-  [param: string]: any;
-}
+};
 
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -104,7 +105,7 @@ export class ChangesFeed implements AsyncIterable<Change> {
         if (this.stopped) return;
         yield change;
       }
-      if (res.lastSeq !== this.since) {
+      if (res.lastSeq != null && res.lastSeq !== this.since) {
         this.since = res.lastSeq;
         if (this.checkpoint) await this.saveCheckpoint();
       }

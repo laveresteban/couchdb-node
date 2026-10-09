@@ -15,7 +15,7 @@
     "build": "tsc",
     "test": "vitest run",
     "conformance": "bash scripts/conformance.sh",
-    "prepublishOnly": "node scripts/sync-version.mjs --check && npm run build"
+    "prepublishOnly": "node scripts/sync-version.mjs --check && node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc"
   },
   "devDependencies": {
     "@getgauge/cli": "^1.6.38",

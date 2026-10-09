@@ -31,11 +31,10 @@ export interface ChangesOptions {
   selector?: Doc;
 }
 
-// Generated Document models read/write `_id` etc. via aliases (id, rev, ...); map them explicitly.
-function toGen(doc: Doc): any {
-  return { ...doc, id: doc._id, rev: doc._rev, deleted: doc._deleted,
-    attachments: doc._attachments, conflicts: doc._conflicts };
-}
+// Send the user's JSON verbatim: the generated Document serializer adds/clobbers alias fields
+// (id, rev, ...). The override runs after the generated body is built and replaces it; the
+// runtime then JSON.stringifies it (Content-Type is JSON), so pass the object, not a string.
+const verbatim = (body: unknown) => () => Promise.resolve({ body: body as any });
 
 // Raw JSON body avoids the generated models adding alias fields to user docs.
 function json<T = any>(call: () => Promise<{ raw: Response }>): Promise<T> {
@@ -105,9 +104,10 @@ export class Database implements ChangesSource {
 
   /** Create or update `doc` in place, setting its `_id` and `_rev`. */
   async save(doc: Doc): Promise<Doc> {
-    const res = await translate(() => "_id" in doc
-      ? this.docs.putDocument({ db: this.name, docid: doc._id, document: toGen(doc) })
-      : this.docs.postDocument({ db: this.name, document: toGen(doc) }));
+    const ov = verbatim(doc);
+    const res = await translate(() => doc._id != null
+      ? this.docs.putDocument({ db: this.name, docid: doc._id, document: doc as any }, ov)
+      : this.docs.postDocument({ db: this.name, document: doc as any }, ov));
     doc._id = res.id;
     doc._rev = res.rev;
     return doc;
@@ -130,7 +130,8 @@ export class Database implements ChangesSource {
   }
 
   bulkSave(docs: Doc[]): Promise<Row[]> {
-    return json(() => this.docs.postBulkDocsRaw({ db: this.name, bulkDocs: { docs: docs.map(toGen) } }));
+    return json(() => this.docs.postBulkDocsRaw(
+      { db: this.name, bulkDocs: { docs } as any }, verbatim({ docs })));
   }
 
   async has(docid: string): Promise<boolean> {
@@ -178,7 +179,7 @@ export class Database implements ChangesSource {
       if (!(e instanceof NotFound)) throw e;
     }
     const res = await translate(() => this.designApi.putDesignDocument({
-      db: this.name, ddoc: name, designDocument: toGen(doc) }));
+      db: this.name, ddoc: name, designDocument: doc as any }, verbatim(doc)));
     doc._rev = res.rev;
     return doc;
   }
@@ -251,7 +252,7 @@ export class Database implements ChangesSource {
   /** Write `_local/<docid>` (not replicated, not in the changes feed). */
   async putLocal(docid: string, doc: Doc): Promise<Doc> {
     const res = await translate(() => this.docs.putLocalDocument({
-      db: this.name, docid, document: toGen(doc) }));
+      db: this.name, docid, document: doc as any }, verbatim(doc)));
     return { ...doc, _id: res.id, _rev: res.rev };
   }
 

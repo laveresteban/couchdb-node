@@ -16,6 +16,8 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
       - run: npm ci
+      - run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - run: node scripts/sync-version.mjs --check
       - run: npm run build
       - run: npm publish --provenance --access public
         env:

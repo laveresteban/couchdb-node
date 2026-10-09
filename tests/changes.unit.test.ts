@@ -59,19 +59,25 @@ describe("ChangesFeed", () => {
     expect(changes).toHaveBeenCalledTimes(2);
   });
 
-  it("treats a raw TypeError as transient", async () => {
+  it("treats a FetchError as transient", async () => {
     const changes = vi.fn()
-      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockRejectedValueOnce(Object.assign(new Error("x"), { name: "FetchError" }))
       .mockResolvedValueOnce(batch("a", "1"));
     const feed = new ChangesFeed(mkDb(changes), { sleep: vi.fn().mockResolvedValue(undefined) });
     expect((await feed[Symbol.asyncIterator]().next()).value).toEqual({ id: "a", seq: "1" });
   });
 
+  it("does not retry a bare TypeError", async () => {
+    const changes = vi.fn().mockRejectedValue(new TypeError("bug"));
+    await expect(drain(new ChangesFeed(mkDb(changes)))).rejects.toBeInstanceOf(TypeError);
+    expect(changes).toHaveBeenCalledTimes(1);
+  });
+
   it("passes poll params and extra options through", async () => {
     const changes = vi.fn().mockRejectedValueOnce(new NotFound(404, "n", "x"));
-    await expect(drain(new ChangesFeed(mkDb(changes), { since: "5", batchSize: 10, timeout: 1000, include_docs: true })))
+    await expect(drain(new ChangesFeed(mkDb(changes), { since: "5", batchSize: 10, timeout: 1000, includeDocs: true })))
       .rejects.toBeInstanceOf(NotFound);
-    expect(changes).toHaveBeenCalledWith({ since: "5", feed: "longpoll", timeout: 1000, limit: 10, include_docs: true });
+    expect(changes).toHaveBeenCalledWith({ since: "5", feed: "longpoll", timeout: 1000, limit: 10, includeDocs: true });
   });
 
   it("stop() ends iteration after the current batch", async () => {
