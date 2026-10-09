@@ -11,14 +11,23 @@ npm install couchdb-node
 ## Quickstart
 
 ```ts
-import { Client } from "couchdb-node";
+import { CouchDB } from "couchdb-node";
 
-const client = new Client({ url: "http://localhost:5984", username: "admin", password: "password" });
-const db = client.database("mydb");
-await db.put({ _id: "a", n: 1 });
+const couch = new CouchDB("http://localhost:5984", "admin", "password");
+const db = await couch.createDatabase("people");
+
+const doc = await db.save({ _id: "alice", age: 30 });
+const alice = await db.get("alice");
+const adults = await db.find({ age: { $gte: 18 } });
+
+// Follow changes (longpoll, checkpointed, at-least-once)
+for await (const change of db.follow()) {
+  console.log(change.id);
+  break;
+}
 ```
 
-(API shown is the target surface; see the Python SDK for the reference behavior.)
+Errors: `NotFound`, `Conflict`, `Unauthorized`, `Forbidden`, `PreconditionFailed` (all extend `CouchDBError`).
 
 ## Parity
 
