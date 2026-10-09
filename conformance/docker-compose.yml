@@ -1,0 +1,25 @@
+services:
+  couchdb:
+    image: couchdb:3
+    environment:
+      COUCHDB_USER: admin
+      COUCHDB_PASSWORD: password
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5984/_up"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  conformance:
+    build:
+      context: ..
+      dockerfile: conformance/Dockerfile
+    depends_on:
+      couchdb:
+        condition: service_healthy
+    environment:
+      COUCHDB_URL: http://couchdb:5984
+      COUCHDB_USER: admin
+      COUCHDB_PASSWORD: password
+      CONFORMANCE_SPECS: /specs
+    volumes:
+      - ../../couchdb-sdk-generator/conformance/specs:/specs:ro

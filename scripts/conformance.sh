@@ -11,7 +11,7 @@ specs="${CONFORMANCE_SPECS:-$root/../couchdb-sdk-generator/conformance/specs}"
 cd "$root/conformance"
 rm -rf specs && cp -r "$specs" specs
 
-gauge() { npx --yes @getgauge/cli@1.6.38 "$@"; }
+gauge() { if command -v gauge >/dev/null; then command gauge "$@"; else npx --yes @getgauge/cli@1.6.38 "$@"; fi; }
 (cd "$root" && npm ci --silent)
 npm ci --silent
 gauge install ts >/dev/null

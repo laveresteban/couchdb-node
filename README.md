@@ -40,3 +40,14 @@ npm test         # vitest
 npm run build    # tsc -> dist/
 node scripts/sync-version.mjs [--check]
 ```
+
+## Conformance
+
+Run the shared Gauge suite against a throwaway CouchDB, no local toolchain needed (only Docker):
+
+```bash
+docker compose -f conformance/docker-compose.yml run --rm conformance
+docker compose -f conformance/docker-compose.yml down -v
+```
+
+Without Docker: `bash scripts/conformance.sh` (needs CouchDB at `COUCHDB_URL`).
