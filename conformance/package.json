@@ -1,0 +1,7 @@
+{
+  "name": "couchdb-node-conformance",
+  "private": true,
+  "dependencies": {
+    "gauge-ts": "^0.5.1"
+  }
+}

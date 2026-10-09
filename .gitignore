@@ -3,3 +3,5 @@ dist/
 conformance/specs
 conformance/reports
 conformance/logs
+conformance/.gauge
+conformance/.gauge-out
