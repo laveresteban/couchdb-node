@@ -51,12 +51,12 @@ describe.skipIf(!up)("CouchDB client", () => {
   it("sessions: bad login keeps cookie unchanged; good login/logout", async () => {
     const c = new CouchDB(URL); // no basic auth: identity comes from the cookie only
     expect((await c.session()).userCtx.name).toBeNull();
-    await expect(c.login(USER, "wrong-password")).rejects.toBeInstanceOf(Unauthorized);
+    await expect(c.login(uniqueName("ghost"), "wrong-password")).rejects.toBeInstanceOf(Unauthorized);
     expect((await c.session()).userCtx.name).toBeNull();
     await c.login(USER, PASSWORD);
     expect((await c.session()).userCtx.name).toBe(USER);
     // failed re-login must not clobber the valid cookie
-    await expect(c.login(USER, "wrong-password")).rejects.toBeInstanceOf(Unauthorized);
+    await expect(c.login(uniqueName("ghost"), "wrong-password")).rejects.toBeInstanceOf(Unauthorized);
     expect((await c.session()).userCtx.name).toBe(USER);
     await c.logout();
     expect((await c.session()).userCtx.name).toBeNull();
