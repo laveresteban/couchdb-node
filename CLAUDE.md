@@ -20,6 +20,11 @@ docker compose -f conformance/docker-compose.yml run --rm conformance
 
 ## Rules
 
+- CI is the shared `sdk-ci.yml` in couchdb-sdk-generator (tests, conformance,
+  generated-code drift check). Change it there, not here; `ci.yml` only
+  passes this SDK's versions and commands. Behavior shared with the other
+  SDKs is described in couchdb-sdk-generator `docs/sdk-design.md`.
+
 - Write user docs verbatim (`verbatim()` override). The generated
   `Document` serializer adds/clobbers fields.
 - Read responses with `.raw.json()` (the `json()` helper) for the same reason.

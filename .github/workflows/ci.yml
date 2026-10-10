@@ -1,3 +1,5 @@
+# Tests, the shared conformance suite and the generated-code drift check all
+# come from couchdb-sdk-generator; see its .github/workflows/sdk-ci.yml.
 name: ci
 on:
   pull_request:
@@ -5,63 +7,12 @@ on:
     branches: [main]
 
 jobs:
-  vitest:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ["18", "20", "22"]
-    services:
-      couchdb:
-        image: couchdb:3.4
-        env:
-          COUCHDB_USER: admin
-          COUCHDB_PASSWORD: password
-        ports: ["5984:5984"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: "${{ matrix.node }}" }
-      - run: npm ci
-      - run: npm run build
-      - name: Wait for CouchDB
-        run: |
-          for i in $(seq 60); do curl -sf http://localhost:5984/_up && break; sleep 1; done
-          for db in _users _replicator _global_changes; do
-            curl -sf -X PUT http://admin:password@localhost:5984/$db || true
-          done
-      - run: node scripts/sync-version.mjs --check
-      - run: npm test
-
-  conformance:
-    runs-on: ubuntu-latest
-    services:
-      couchdb:
-        image: couchdb:3.4
-        env:
-          COUCHDB_USER: admin
-          COUCHDB_PASSWORD: password
-        ports: ["5984:5984"]
-    steps:
-      - uses: actions/checkout@v4
-        with: { path: couchdb-node }
-      - name: Check out shared conformance specs
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository_owner }}/couchdb-sdk-generator
-          path: couchdb-sdk-generator
-          sparse-checkout: conformance
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - name: Wait for CouchDB
-        run: |
-          for i in $(seq 60); do curl -sf http://localhost:5984/_up && break; sleep 1; done
-          for db in _users _replicator _global_changes; do
-            curl -sf -X PUT http://admin:password@localhost:5984/$db || true
-          done
-      - run: bash couchdb-node/scripts/conformance.sh
-      - if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: conformance-report
-          path: couchdb-node/conformance/reports/html-report
+  ci:
+    uses: laveresteban/couchdb-sdk-generator/.github/workflows/sdk-ci.yml@main
+    with:
+      language: node
+      matrix-key: typescript
+      versions: '["18", "20", "22"]'
+      conformance-version: "20"
+      install: npm ci && npm run build
+      test: node scripts/sync-version.mjs --check && npm test
