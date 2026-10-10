@@ -5,6 +5,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Lets CI be started by hand, e.g. after sdk-ci.yml changes upstream:
+  # a run that failed because the shared workflow was missing can't be retried.
+  workflow_dispatch:
 
 jobs:
   ci:
