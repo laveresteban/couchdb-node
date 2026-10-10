@@ -1,6 +1,7 @@
 import {
-  AuthenticationApi, Configuration, DatabasesApi, ReplicationApi, ServerApi,
+  AuthenticationApi, Configuration, DatabasesApi, MaintenanceApi, ReplicationApi, ServerApi,
 } from "../couchdb_client/src";
+import type { GetDbUpdatesRequest } from "../couchdb_client/src";
 import { Database } from "./database";
 import { NotFound, translate } from "./errors";
 import type { Doc } from "./types";
@@ -26,6 +27,7 @@ export class CouchDB {
   private readonly auth: AuthenticationApi;
   private readonly dbs: DatabasesApi;
   private readonly replication: ReplicationApi;
+  private readonly maintenance: MaintenanceApi;
 
   constructor(url = "http://localhost:5984", username?: string, password?: string, options: CouchDBOptions = {}) {
     this.basePath = url.replace(/\/+$/, "");
@@ -70,6 +72,7 @@ export class CouchDB {
     this.auth = new AuthenticationApi(this.config);
     this.dbs = new DatabasesApi(this.config);
     this.replication = new ReplicationApi(this.config);
+    this.maintenance = new MaintenanceApi(this.config);
   }
 
   close(): void { /* global fetch has no pool; kept for try/finally symmetry */ }
@@ -94,6 +97,31 @@ export class CouchDB {
 
   allDbs(): Promise<string[]> {
     return translate(() => this.server.getAllDbs());
+  }
+
+  /** Running compactions, indexing and replications. */
+  activeTasks(): Promise<Doc[]> {
+    return translate(async () => (await this.maintenance.getActiveTasksRaw()).raw.json());
+  }
+
+  /** Info for several databases at once: `{ key, info }` or `{ key, error }` each. */
+  dbsInfo(names: string[]): Promise<Doc[]> {
+    return translate(async () => (await this.dbs.postDbsInfoRaw({ postDbsInfoRequest: { keys: names } })).raw.json());
+  }
+
+  /** Replication jobs the scheduler is running. */
+  schedulerJobs(opts: { limit?: number; skip?: number } = {}): Promise<Doc> {
+    return translate(async () => (await this.replication.getSchedulerJobsRaw(opts)).raw.json());
+  }
+
+  /** State of replications defined in `_replicator` databases. */
+  schedulerDocs(opts: { limit?: number; skip?: number } = {}): Promise<Doc> {
+    return translate(async () => (await this.replication.getSchedulerDocsRaw(opts)).raw.json());
+  }
+
+  /** One page of database events (`feed: "longpoll"`, `since`, `timeout` ...). */
+  dbUpdates(opts: GetDbUpdatesRequest = {}): Promise<Doc> {
+    return translate(async () => (await this.server.getDbUpdatesRaw(opts)).raw.json());
   }
 
   // -- sessions
@@ -133,14 +161,17 @@ export class CouchDB {
   }
 
   // -- replication
-  private endpoint(x: string): Doc {
-    if (x.includes("://")) return { url: x };
+  private endpoint(x: string): Doc | string {
+    if (x.includes("://")) return x; // full URLs go through as-is
     const ep: Doc = { url: `${this.replicationUrl}/${encodeURIComponent(x)}` };
     if (this.username) ep.auth = { basic: { username: this.username, password: this.password } };
     return ep;
   }
 
-  /** Replicate between databases. Bare names are resolved against this server. */
+  /**
+   * Replicate between databases. Bare names are resolved against this server
+   * (with this client's credentials); full URLs are passed through as-is.
+   */
   async replicate(source: string, target: string, options: Doc = {}): Promise<Doc> {
     const body: any = { source: this.endpoint(source), target: this.endpoint(target), ...options };
     return { ...(await translate(() => this.replication.postReplicate({ replicationRequest: body }))) };

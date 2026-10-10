@@ -431,6 +431,106 @@ export default class Steps {
     eq(sorted(got), sorted(ids.split(",")));
   }
 
+  // -- attachments: content type
+  @Step("Attach <data> as <name> with content type <ctype> to document <docid>")
+  async attachTyped(data: string, name: string, ctype: string, docid: string) {
+    await db().putAttachment(docid, name, new TextEncoder().encode(data), ctype);
+  }
+
+  @Step("Attachment <name> of document <docid> has content type <ctype>")
+  async attachmentType(name: string, docid: string, ctype: string) {
+    eq((await db().get(docid))._attachments[name].content_type, ctype);
+  }
+
+  // -- views: key range
+  @Step("Querying view <path> from key <start> to key <end> returns <count> rows")
+  async viewRange(path: string, start: string, end: string, count: string) {
+    const [ddoc, view] = path.split("/");
+    const rows = await db().view(ddoc, view, { reduce: false, startKey: Number(start), endKey: Number(end) });
+    eq(rows.length, Number(count));
+  }
+
+  // -- listings
+  @Step("Design documents list <count> rows")
+  async designDocs(count: string) { eq((await db().designDocs()).length, Number(count)); }
+
+  @Step("Local documents list <count> rows")
+  async localDocs(count: string) { eq((await db().localDocs()).length, Number(count)); }
+
+  // -- replication with plain URLs
+  @Step("Replicate the database to a new database using plain URLs")
+  async replicateUrls() {
+    s.replica = newName();
+    const u = new globalThis.URL(URL);
+    u.username = USER;
+    u.password = PASSWORD;
+    const base = u.toString().replace(/\/+$/, "");
+    await couch().replicate(`${base}/${db().name}`, `${base}/${s.replica}`, { createTarget: true });
+  }
+
+  // -- conditional reads
+  @Step("Checking document <docid> reports the remembered revision")
+  async headRev(docid: string) { eq(await db().head(docid), s.rev); }
+
+  @Step("Checking document <docid> reports it is missing")
+  async headMissing(docid: string) { eq(await db().head(docid), null); }
+
+  @Step("Reading document <docid> again with its ETag reports not modified")
+  async notModified(docid: string) {
+    eq(await db().getIfChanged(docid, (await db().head(docid))!), null);
+  }
+
+  // -- maintenance
+  @Step("Compact the database")
+  async compact() { await db().compact(); }
+
+  @Step("Active tasks can be listed")
+  async activeTasks() { ok(Array.isArray(await couch().activeTasks()), "not a list"); }
+
+  @Step("Clean up view indexes")
+  async viewCleanup() { await db().viewCleanup(); }
+
+  @Step("Purge document <docid>")
+  async purge(docid: string) {
+    const rev = (await db().get(docid))._rev;
+    eq(await db().purge({ [docid]: [rev] }), { [docid]: [rev] });
+  }
+
+  @Step("Explaining a query for age greater than <age> uses index <name>")
+  async explain(age: string, name: string) {
+    eq((await db().explain({ age: { $gt: Number(age) } })).index.name, name);
+  }
+
+  @Step("Database info for this database and <other> finds <found> and misses <missing>")
+  async dbsInfo(other: string, found: string, missing: string) {
+    const res = await couch().dbsInfo([db().name, other]);
+    eq(res.filter((r) => r.info).length, Number(found));
+    eq(res.filter((r) => r.error === "not_found").length, Number(missing));
+  }
+
+  // -- server: scheduler and db updates
+  @Step("The replication scheduler lists jobs and documents")
+  async scheduler() {
+    ok(Array.isArray((await couch().schedulerJobs()).jobs), "jobs not a list");
+    ok(Array.isArray((await couch().schedulerDocs()).docs), "docs not a list");
+  }
+
+  @Step("Creating a database shows up in the database updates feed")
+  async dbUpdates() {
+    let since = (await couch().dbUpdates({ descending: true, limit: 1 })).last_seq;
+    const name = newName();
+    await couch().createDatabase(name);
+    const seen: string[] = [];
+    // The feed is written asynchronously; give it a few polls.
+    for (let i = 0; i < 10; i++) {
+      const page = await couch().dbUpdates({ feed: "longpoll", since, timeout: 5000 });
+      for (const r of page.results) seen.push(`${r.db_name}:${r.type}`);
+      if (seen.includes(`${name}:created`)) return;
+      since = page.last_seq;
+    }
+    throw new Error(`${name} not in ${seen.join(", ")}`);
+  }
+
   // -- security
   @Step("Set the database members to user <user>")
   async setMembers(user: string) { await db().setSecurity(undefined, { names: [user], roles: [] }); }

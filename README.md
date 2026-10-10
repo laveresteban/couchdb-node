@@ -33,6 +33,17 @@ await db.bulkGet([{ id: "alice" }], { revs: true });       // docs with _revisio
 await db.bulkSave(docsWithRevisions, { newEdits: false }); // keep the given _rev ids
 ```
 
+Housekeeping and cheap checks:
+
+```ts
+await db.head("alice");                  // current rev without the body, or null
+await db.getIfChanged("alice", rev);     // null if unchanged (ETag / 304)
+await db.explain({ age: { $gt: 30 } });  // which index a query uses
+await db.purge({ alice: [rev] });        // remove revisions for good
+await db.compact(); await db.viewCleanup();
+await couch.dbsInfo(["people", "other"]); await couch.activeTasks();
+```
+
 `login()` keeps the cookie session alive: it takes the renewed cookie CouchDB
 sends and logs in again once if the session expires.
 

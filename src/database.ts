@@ -1,11 +1,11 @@
 import {
   AttachmentsApi, ChangesApi, Configuration, DatabasesApi, DesignDocumentsApi, DocumentsApi,
-  PartitionsApi, QueryApi, ReplicationApi, SecurityApi,
+  MaintenanceApi, PartitionsApi, QueryApi, ReplicationApi, SecurityApi,
 } from "../couchdb_client/src";
 import type { AllDocsQuery, FindQuery, ViewQuery } from "../couchdb_client/src";
 import { ChangesFeed } from "./changes";
 import type { ChangesFeedOptions, ChangesSource } from "./changes";
-import { Conflict, NotFound, translate } from "./errors";
+import { Conflict, CouchDBError, NotFound, translate } from "./errors";
 import type { Change, ChangesResult, Doc, FindResult } from "./types";
 
 export type Row = Record<string, any>;
@@ -42,6 +42,22 @@ export interface GetOptions {
   /** With `rev`, return the latest leaf on that branch. */
   latest?: boolean;
 }
+
+/** Options for `designDocs()` / `localDocs()`. Keys take plain values; they're JSON-encoded here. */
+export interface ListOptions {
+  includeDocs?: boolean;
+  startKey?: unknown;
+  endKey?: unknown;
+  limit?: number;
+  skip?: number;
+  descending?: boolean;
+}
+
+const listParams = ({ startKey, endKey, ...rest }: ListOptions) => ({
+  ...rest,
+  ...(startKey !== undefined ? { startKey: JSON.stringify(startKey) } : {}),
+  ...(endKey !== undefined ? { endKey: JSON.stringify(endKey) } : {}),
+});
 
 /** One `_bulk_get` request entry. */
 export interface BulkGetItem {
@@ -95,6 +111,7 @@ export class Database implements ChangesSource {
   private changesApi: ChangesApi;
   private securityApi: SecurityApi;
   private replication: ReplicationApi;
+  private maintenance: MaintenanceApi;
 
   constructor(config: Configuration, public name: string) {
     this.dbs = new DatabasesApi(config);
@@ -106,6 +123,7 @@ export class Database implements ChangesSource {
     this.securityApi = new SecurityApi(config);
     this._partitions = new PartitionsApi(config);
     this.replication = new ReplicationApi(config);
+    this.maintenance = new MaintenanceApi(config);
   }
 
   // -- database ---------------------------------------------------------
@@ -126,6 +144,28 @@ export class Database implements ChangesSource {
   // -- documents --------------------------------------------------------
   get(docid: string, params: GetOptions = {}): Promise<Doc> {
     return json(() => this.docs.getDocumentRaw({ db: this.name, docid, ...params }));
+  }
+
+  /** The doc's current revision without downloading it, or null if it doesn't exist. */
+  async head(docid: string): Promise<string | null> {
+    try {
+      const res = await translate(() => this.docs.headDocumentRaw({ db: this.name, docid }));
+      return res.raw.headers.get("etag")?.replace(/"/g, "") || null;
+    } catch (e) {
+      if (e instanceof NotFound) return null;
+      throw e;
+    }
+  }
+
+  /** The doc, or null if it still matches `etag` (its rev, quoted or not). */
+  async getIfChanged(docid: string, etag: string): Promise<Doc | null> {
+    const ifNoneMatch = etag.startsWith('"') ? etag : `"${etag}"`;
+    try {
+      return await json(() => this.docs.getDocumentRaw({ db: this.name, docid, ifNoneMatch }));
+    } catch (e) {
+      if (e instanceof CouchDBError && e.status === 304) return null; // non-2xx throws
+      throw e;
+    }
   }
 
   /** Create or update `doc` in place, setting its `_id` and `_rev`. */
@@ -197,6 +237,21 @@ export class Database implements ChangesSource {
     const body = { selector, ...snake(opts) };
     return findResult(await json(() => this.queryApi.postFindRaw({
       db: this.name, findQuery: body as any }, verbatim(body))));
+  }
+
+  /** The plan for a Mango query: which index it uses, and the options applied. */
+  explain(selector: Doc, opts: FindOptions | Record<string, any> = {}): Promise<Row> {
+    const body = { selector, ...snake(opts) };
+    return json(() => this.queryApi.postExplainRaw({ db: this.name, findQuery: body as any }, verbatim(body)));
+  }
+
+  async designDocs(opts: ListOptions = {}): Promise<Row[]> {
+    return (await json(() => this.queryApi.getDesignDocsRaw({ db: this.name, ...listParams(opts) }))).rows ?? [];
+  }
+
+  /** Rows for the `_local` documents (checkpoints). */
+  async localDocs(opts: ListOptions = {}): Promise<Row[]> {
+    return (await json(() => this.queryApi.getLocalDocsRaw({ db: this.name, ...listParams(opts) }))).rows ?? [];
   }
 
   createIndex(fields: string[], name?: string, opts: Record<string, any> = {}): Promise<Row> {
@@ -319,6 +374,22 @@ export class Database implements ChangesSource {
   async deleteLocal(docid: string, rev?: string): Promise<void> {
     rev ??= (await this.getLocal(docid))._rev;
     await translate(() => this.docs.deleteLocalDocument({ db: this.name, docid, rev }));
+  }
+
+  // -- maintenance -------------------------------------------------------
+  /** Start compacting the database; it runs in the background. */
+  async compact(): Promise<void> {
+    await translate(() => this.maintenance.postCompact({ db: this.name, body: {} }));
+  }
+
+  /** Remove index files no design document uses anymore. */
+  async viewCleanup(): Promise<void> {
+    await translate(() => this.maintenance.postViewCleanup({ db: this.name, body: {} }));
+  }
+
+  /** Permanently remove revisions (no tombstone, not replicated). Returns what was purged. */
+  async purge(revs: Record<string, string[]>): Promise<Record<string, string[]>> {
+    return (await json(() => this.maintenance.postPurgeRaw({ db: this.name, requestBody: revs }))).purged;
   }
 
   // -- replication primitives -------------------------------------------

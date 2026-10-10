@@ -202,5 +202,36 @@ describe.skipIf(!up)("Database (live CouchDB)", () => {
     await done;
     expect(Date.now() - started).toBeLessThan(5_000);
   });
+
+  it("head and conditional get", async () => {
+    const db = await mkdb();
+    const { _rev } = await db.save({ _id: "a", v: 1 });
+    expect(await db.head("a")).toBe(_rev);
+    expect(await db.head("missing")).toBeNull();
+    expect(await db.getIfChanged("a", _rev)).toBeNull();
+    await db.update("a", (d) => ({ ...d, v: 2 }));
+    expect((await db.getIfChanged("a", _rev))?.v).toBe(2);
+  });
+
+  it("listings, explain and key ranges", async () => {
+    const db = await mkdb();
+    await db.saveDesign("stats", { by_v: { map: "function(d){ emit(d.v, 1); }" } });
+    await db.putLocal("cp", { seq: "1" });
+    expect((await db.designDocs()).map((r) => r.id)).toEqual(["_design/stats"]);
+    expect((await db.localDocs()).map((r) => r.id)).toEqual(["_local/cp"]);
+    await db.bulkSave([{ v: 0 }, { v: 1 }, { v: 2 }]);
+    await db.createIndex(["v"], "v-idx");
+    expect((await db.explain({ v: { $gt: 0 } })).index.name).toBe("v-idx");
+    expect(await db.view("stats", "by_v", { startKey: 1 })).toHaveLength(2);
+  });
+
+  it("purge, compact and view cleanup", async () => {
+    const db = await mkdb();
+    const { _rev } = await db.save({ _id: "a" });
+    expect(await db.purge({ a: [_rev] })).toEqual({ a: [_rev] });
+    expect(await db.has("a")).toBe(false);
+    await db.compact();
+    await db.viewCleanup();
+  });
 });
 

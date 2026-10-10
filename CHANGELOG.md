@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0 (unreleased)
+- Regenerated from couchdb-openapi 0.7.0 (stale `ReplicationRequestSource`/`Target` models removed).
+- `Database.head()`, `getIfChanged()` (ETag / 304), `explain()`, `designDocs()`,
+  `localDocs()`, `purge()`, `compact()`, `viewCleanup()`.
+- `CouchDB.dbsInfo()`, `activeTasks()`, `schedulerJobs()`, `schedulerDocs()`, `dbUpdates()`.
+- `replicate()` passes full URLs through as plain strings.
+- Steps for the 13 conformance scenarios added with spec 0.7.0 (46/46). Same API as couchdb-python 0.7.0.
+
 ## 0.6.0 (unreleased)
 - Regenerated from couchdb-openapi 0.6.0 (`_revs_diff`, `_bulk_get`, `revs`/`latest`
   on document GET, continuous `_changes`, more view query fields, typed 401/403).
