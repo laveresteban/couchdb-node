@@ -24,38 +24,20 @@ docker compose -f conformance/docker-compose.yml run --rm conformance
   `Document` serializer adds/clobbers fields.
 - Read responses with `.raw.json()` (the `json()` helper) for the same reason.
 
-## Fixes
+## Fixes still open
 
-1. **Generated client is on spec 0.3.0; spec is 0.5.0.** Missing continuous
-   `feed`, `revs`/`latest` on GET document, `_revs_diff`, `_bulk_get`.
-   Regenerate and run `sync-version.mjs`.
-2. **Conformance gaps.** No steps for the continuous-reader scenarios in
-   `changes.spec` or for any of `sync.spec`. Both landed on generator `main`
-   after the last green CI run, so expect the next run to fail.
-3. **No continuous feed in `ChangesFeed`.** Python has `feed="continuous"`
-   (raw streaming, heartbeat, reconnect from last seq). Port it using
-   `fetch` + `response.body` reader, with an `AbortController` for `stop()`.
-4. **`stop()` can't interrupt a pending longpoll.** It only sets a flag, so
-   the iterator waits up to `timeout` (60 s) before ending. Abort the
-   in-flight request.
-5. **`bulkSave` doesn't update the input docs** (`save` does). Copy
-   `id`/`rev` back for rows without `error`.
-6. **`get()` params type** only allows `rev`, `revsInfo`, `conflicts`.
-   Add `revs`, `latest` after regenerating.
-7. **`find`/`createIndex` options are camelCase only.** Passing CouchDB's
-   snake_case (`use_index`, `partial_filter_selector`) is silently dropped by
-   the generated `ToJSON`. Either accept both or document it.
-8. **Session cookie isn't renewed on 401.** The middleware keeps the newest
-   `Set-Cookie`, but once it expires every call fails. Re-login on 401 when
-   credentials are known.
-9. `CHANGELOG.md` only has 0.3.0.
+Done in 0.6.0: regenerated client, continuous feed, abortable `stop()`,
+`sync.spec` + continuous conformance steps, `bulkSave` revs, `get()`
+`revs`/`latest`, snake_case options, session re-login, `replicationUrl`.
+`scripts/conformance.sh` now fails on skipped scenarios.
+
+- `scripts/conformance.sh` runs `gauge install ts`, which needs network even
+  when the plugin is already installed.
 
 ## Features to add
 
 - ESM + CJS dual build (currently CJS only).
 - Browser support (no `getSetCookie`, CORS) or document Node-only.
-- `revsDiff`, `bulkGet`, `deleteLocal`, `bulkSave({ newEdits: false })`
-  wrappers (needed for `sync.spec`).
 - Async-iterator paging helpers for `allDocs`/`find`.
 - Generic typed docs: `Database<T>`.
 - Attachment streaming (`ReadableStream` in/out).

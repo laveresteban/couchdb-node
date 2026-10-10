@@ -20,12 +20,21 @@ const doc = await db.save({ _id: "alice", age: 30 });
 const alice = await db.get("alice");
 const adults = await db.find({ age: { $gte: 18 } });
 
-// Follow changes (longpoll, checkpointed, at-least-once)
-for await (const change of db.follow()) {
+// Follow changes (longpoll by default, checkpointed, at-least-once)
+const feed = db.follow({ feed: "continuous", checkpoint: "indexer", includeDocs: true });
+for await (const change of feed) {
   console.log(change.id);
-  break;
+  if (done) feed.stop(); // also aborts the open request
 }
+
+// Replication building blocks, for writing your own sync
+await db.revsDiff({ alice: [alice._rev] });               // revisions the db is missing
+await db.bulkGet([{ id: "alice" }], { revs: true });       // docs with _revisions
+await db.bulkSave(docsWithRevisions, { newEdits: false }); // keep the given _rev ids
 ```
+
+`login()` keeps the cookie session alive: it takes the renewed cookie CouchDB
+sends and logs in again once if the session expires.
 
 Errors: `NotFound`, `Conflict`, `Unauthorized`, `Forbidden`, `PreconditionFailed` (all extend `CouchDBError`).
 

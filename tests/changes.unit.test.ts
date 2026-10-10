@@ -4,8 +4,22 @@ import { CouchDBError, NotFound } from "../src/errors";
 
 const batch = (id: string, seq: string) => ({ results: [{ id, seq }], lastSeq: seq });
 
-function mkDb(changes = vi.fn()) {
-  return { changes, getLocal: vi.fn(), putLocal: vi.fn() };
+function mkDb(changes = vi.fn(), continuousChanges = vi.fn()) {
+  return { changes, continuousChanges, getLocal: vi.fn(), putLocal: vi.fn() };
+}
+
+/** A byte stream that sends each chunk, then ends (or errors, for an Error item). */
+function stream(...chunks: (string | Error)[]): ReadableStream<Uint8Array> {
+  const enc = new TextEncoder();
+  const queue = [...chunks];
+  return new ReadableStream({
+    pull(c) {
+      const x = queue.shift();
+      if (x === undefined) c.close();
+      else if (x instanceof Error) c.error(x);
+      else c.enqueue(enc.encode(x));
+    },
+  });
 }
 
 async function drain(feed: ChangesFeed) {
@@ -77,7 +91,8 @@ describe("ChangesFeed", () => {
     const changes = vi.fn().mockRejectedValueOnce(new NotFound(404, "n", "x"));
     await expect(drain(new ChangesFeed(mkDb(changes), { since: "5", batchSize: 10, timeout: 1000, includeDocs: true })))
       .rejects.toBeInstanceOf(NotFound);
-    expect(changes).toHaveBeenCalledWith({ since: "5", feed: "longpoll", timeout: 1000, limit: 10, includeDocs: true });
+    expect(changes).toHaveBeenCalledWith({
+      since: "5", feed: "longpoll", timeout: 1000, limit: 10, includeDocs: true, signal: expect.any(AbortSignal) });
   });
 
   it("stop() ends iteration after the current batch", async () => {
@@ -108,5 +123,59 @@ describe("ChangesFeed", () => {
     db.getLocal.mockRejectedValue(new NotFound(404, "not_found", "missing"));
     await expect(drain(new ChangesFeed(db, { checkpoint: "cp" }))).rejects.toBeInstanceOf(NotFound);
     expect(db.changes.mock.calls[0][0].since).toBe("0");
+  });
+
+  it("stop() aborts a pending longpoll", async () => {
+    let signal: AbortSignal | undefined;
+    const changes = vi.fn((opts: any) => {
+      signal = opts.signal;
+      return new Promise((_, reject) => opts.signal.addEventListener("abort", () =>
+        reject(new CouchDBError(0, "fetch_error", "aborted"))));
+    });
+    const feed = new ChangesFeed(mkDb(changes));
+    const done = drain(feed);
+    await vi.waitFor(() => expect(changes).toHaveBeenCalled());
+    feed.stop();
+    await expect(done).resolves.toEqual([]);
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("continuous: yields rows split across chunks, skips heartbeats, keeps seq on null", async () => {
+    const cont = vi.fn().mockResolvedValueOnce(stream(
+      '{"seq":"1","id":"a"}\n\n{"seq":nu', 'll,"id":"b"}\n{"seq":"3","id":"c"}\n'));
+    const feed = new ChangesFeed(mkDb(vi.fn(), cont), { feed: "continuous" });
+    const got: string[] = [];
+    for await (const c of feed) {
+      got.push(c.id);
+      if (c.id === "b") expect(feed.since).toBe("1");
+      if (got.length === 3) feed.stop();
+    }
+    expect(got).toEqual(["a", "b", "c"]);
+    expect(feed.since).toBe("3");
+  });
+
+  it("continuous: reconnects from the last seq after a dropped connection", async () => {
+    const cont = vi.fn()
+      .mockResolvedValueOnce(stream('{"seq":"1","id":"a"}\n', new CouchDBError(0, "fetch_error", "reset")))
+      .mockResolvedValueOnce(stream('{"seq":"2","id":"b"}\n'));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const feed = new ChangesFeed(mkDb(vi.fn(), cont), { feed: "continuous", sleep });
+    const got: string[] = [];
+    for await (const c of feed) {
+      got.push(c.id);
+      if (got.length === 2) feed.stop();
+    }
+    expect(got).toEqual(["a", "b"]);
+    expect(cont.mock.calls[1][0].since).toBe("1");
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("continuous: saves the checkpoint on stop", async () => {
+    const db = mkDb(vi.fn(), vi.fn().mockResolvedValue(stream('{"seq":"7","id":"a"}\n')));
+    db.getLocal.mockRejectedValue(new NotFound(404, "not_found", "missing"));
+    db.putLocal.mockResolvedValue({ _rev: "0-1" });
+    const feed = new ChangesFeed(db, { feed: "continuous", checkpoint: "cp" });
+    for await (const _ of feed) feed.stop();
+    expect(db.putLocal).toHaveBeenCalledWith("cp", { since: "7" });
   });
 });

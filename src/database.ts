@@ -1,6 +1,6 @@
 import {
   AttachmentsApi, ChangesApi, Configuration, DatabasesApi, DesignDocumentsApi, DocumentsApi,
-  PartitionsApi, QueryApi, SecurityApi,
+  PartitionsApi, QueryApi, ReplicationApi, SecurityApi,
 } from "../couchdb_client/src";
 import type { AllDocsQuery, FindQuery, ViewQuery } from "../couchdb_client/src";
 import { ChangesFeed } from "./changes";
@@ -29,7 +29,30 @@ export interface ChangesOptions {
   descending?: boolean;
   docIds?: string[];
   selector?: Doc;
+  /** Aborts the request (e.g. a pending longpoll). */
+  signal?: AbortSignal;
 }
+
+export interface GetOptions {
+  rev?: string;
+  revsInfo?: boolean;
+  conflicts?: boolean;
+  /** Include the revision history as `_revisions`. */
+  revs?: boolean;
+  /** With `rev`, return the latest leaf on that branch. */
+  latest?: boolean;
+}
+
+/** One `_bulk_get` request entry. */
+export interface BulkGetItem {
+  id: string;
+  rev?: string;
+  atts_since?: string[];
+}
+
+// CouchDB's own snake_case names are accepted alongside camelCase.
+const snake = (o: Record<string, any>) =>
+  Object.fromEntries(Object.entries(o).map(([k, v]) => [k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`), v]));
 
 // Send the user's JSON verbatim: the generated Document serializer adds/clobbers alias fields
 // (id, rev, ...). The override runs after the generated body is built and replaces it; the
@@ -55,8 +78,9 @@ export class Partition {
   }
 
   async find(selector: Doc, opts: FindOptions = {}): Promise<FindResult> {
+    const body = { selector, ...snake(opts) };
     return findResult(await json(() => this.database._partitions.postPartitionFindRaw({
-      db: this.database.name, partition: this.name, findQuery: { selector, ...opts } })));
+      db: this.database.name, partition: this.name, findQuery: body as any }, verbatim(body))));
   }
 }
 
@@ -70,6 +94,7 @@ export class Database implements ChangesSource {
   private attachments: AttachmentsApi;
   private changesApi: ChangesApi;
   private securityApi: SecurityApi;
+  private replication: ReplicationApi;
 
   constructor(config: Configuration, public name: string) {
     this.dbs = new DatabasesApi(config);
@@ -80,6 +105,7 @@ export class Database implements ChangesSource {
     this.changesApi = new ChangesApi(config);
     this.securityApi = new SecurityApi(config);
     this._partitions = new PartitionsApi(config);
+    this.replication = new ReplicationApi(config);
   }
 
   // -- database ---------------------------------------------------------
@@ -98,7 +124,7 @@ export class Database implements ChangesSource {
   }
 
   // -- documents --------------------------------------------------------
-  get(docid: string, params: { rev?: string; revsInfo?: boolean; conflicts?: boolean } = {}): Promise<Doc> {
+  get(docid: string, params: GetOptions = {}): Promise<Doc> {
     return json(() => this.docs.getDocumentRaw({ db: this.name, docid, ...params }));
   }
 
@@ -129,9 +155,26 @@ export class Database implements ChangesSource {
     }
   }
 
-  bulkSave(docs: Doc[]): Promise<Row[]> {
-    return json(() => this.docs.postBulkDocsRaw(
-      { db: this.name, bulkDocs: { docs } as any }, verbatim({ docs })));
+  /**
+   * Write many docs at once. Docs that were saved get their new `_id`/`_rev`.
+   * With `newEdits: false` the docs keep the `_rev` (and `_revisions`) you
+   * give them, the way a replicator writes; CouchDB then only reports failures.
+   */
+  async bulkSave(docs: Doc[], opts: { newEdits?: boolean } = {}): Promise<Row[]> {
+    const body: Doc = { docs };
+    if (opts.newEdits === false) body.new_edits = false;
+    const rows: Row[] = await json(() => this.docs.postBulkDocsRaw(
+      { db: this.name, bulkDocs: body as any }, verbatim(body)));
+    if (opts.newEdits !== false) {
+      docs.forEach((doc, i) => {
+        const row = rows[i];
+        if (row?.rev && !row.error) {
+          doc._id = row.id;
+          doc._rev = row.rev;
+        }
+      });
+    }
+    return rows;
   }
 
   async has(docid: string): Promise<boolean> {
@@ -150,15 +193,21 @@ export class Database implements ChangesSource {
     return res.rows ?? [];
   }
 
-  async find(selector: Doc, opts: FindOptions = {}): Promise<FindResult> {
+  async find(selector: Doc, opts: FindOptions | Record<string, any> = {}): Promise<FindResult> {
+    const body = { selector, ...snake(opts) };
     return findResult(await json(() => this.queryApi.postFindRaw({
-      db: this.name, findQuery: { selector, ...opts } })));
+      db: this.name, findQuery: body as any }, verbatim(body))));
   }
 
   createIndex(fields: string[], name?: string, opts: Record<string, any> = {}): Promise<Row> {
-    const { partialFilterSelector, ...rest } = opts;
-    return json(() => this.queryApi.postIndexRaw({ db: this.name, indexDefinitionRequest: {
-      index: { fields, partialFilterSelector }, ...(name ? { name } : {}), ...rest } }));
+    const { partialFilterSelector, partial_filter_selector, ...rest } = opts;
+    const pfs = partialFilterSelector ?? partial_filter_selector;
+    const body = {
+      index: { fields, ...(pfs ? { partial_filter_selector: pfs } : {}) },
+      ...(name ? { name } : {}), ...snake(rest),
+    };
+    return json(() => this.queryApi.postIndexRaw(
+      { db: this.name, indexDefinitionRequest: body as any }, verbatim(body)));
   }
 
   async indexes(): Promise<Row[]> {
@@ -229,15 +278,26 @@ export class Database implements ChangesSource {
   // -- changes ----------------------------------------------------------
   /** One page of changes. `docIds` or `selector` filter server-side via POST. */
   async changes(opts: ChangesOptions = {}): Promise<ChangesResult> {
+    const { signal, ...rest } = opts;
+    const res = await json(() => this.changesRequest(rest, signal));
+    return { results: res.results as Change[], lastSeq: res.last_seq, pending: res.pending };
+  }
+
+  /** Opens `feed=continuous` and returns the raw NDJSON body (see `follow({ feed: "continuous" })`). */
+  async continuousChanges(opts: ChangesOptions = {}, signal?: AbortSignal): Promise<ReadableStream<Uint8Array>> {
+    const res = await translate(() => this.changesRequest({ ...opts, feed: "continuous" }, signal));
+    return res.raw.body!;
+  }
+
+  // GET, or POST when filtering by docIds/selector. The body isn't read here.
+  private changesRequest(opts: ChangesOptions, signal?: AbortSignal) {
     const { since = "0", docIds, selector, ...rest } = opts;
     const params: any = { db: this.name, since, ...rest };
-    const res = await json(() => {
-      if (docIds === undefined && selector === undefined) return this.changesApi.getChangesRaw(params);
-      params.filter ??= selector !== undefined ? "_selector" : "_doc_ids";
-      params.changesQuery = { docIds, selector };
-      return this.changesApi.postChangesRaw(params);
-    });
-    return { results: res.results as Change[], lastSeq: res.last_seq, pending: res.pending };
+    const init = signal ? { signal } : undefined;
+    if (docIds === undefined && selector === undefined) return this.changesApi.getChangesRaw(params, init);
+    params.filter ??= selector !== undefined ? "_selector" : "_doc_ids";
+    params.changesQuery = { docIds, selector };
+    return this.changesApi.postChangesRaw(params, init);
   }
 
   follow(opts?: ChangesFeedOptions): ChangesFeed {
@@ -254,6 +314,28 @@ export class Database implements ChangesSource {
     const res = await translate(() => this.docs.putLocalDocument({
       db: this.name, docid, document: doc as any }, verbatim(doc)));
     return { ...doc, _id: res.id, _rev: res.rev };
+  }
+
+  async deleteLocal(docid: string, rev?: string): Promise<void> {
+    rev ??= (await this.getLocal(docid))._rev;
+    await translate(() => this.docs.deleteLocalDocument({ db: this.name, docid, rev }));
+  }
+
+  // -- replication primitives -------------------------------------------
+  /** Which of the given revisions this database is missing, per doc id. */
+  revsDiff(revs: Record<string, string[]>): Promise<Record<string, { missing: string[]; possible_ancestors?: string[] }>> {
+    return json(() => this.replication.postRevsDiffRaw({ db: this.name, requestBody: revs }));
+  }
+
+  /**
+   * Fetch many docs/revisions at once. Returns one entry per requested id:
+   * `{ id, docs: [{ ok: doc } | { error: {...} }] }`.
+   */
+  async bulkGet(docs: BulkGetItem[], opts: { revs?: boolean; latest?: boolean; attachments?: boolean } = {}): Promise<Row[]> {
+    const body = { docs };
+    const res = await json(() => this.replication.postBulkGetRaw(
+      { db: this.name, bulkGetRequest: body as any, ...opts }, verbatim(body)));
+    return res.results;
   }
 
   // -- security ---------------------------------------------------------

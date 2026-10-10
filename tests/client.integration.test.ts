@@ -62,4 +62,27 @@ describe.skipIf(!up)("CouchDB client", () => {
     expect((await c.session()).userCtx.name).toBeNull();
     c.close();
   });
+
+  it("logs in again when the cookie session expires", async () => {
+    const n = uniqueName();
+    created.push(n);
+    const db = await admin.createDatabase(n);
+    await db.setSecurity(undefined, { names: [USER], roles: [] });
+    // Shorten the server's session timeout to 1 s for this test.
+    const cfg = `${URL}/_node/_local/_config/chttpd_auth/timeout`;
+    const auth = { Authorization: "Basic " + Buffer.from(`${USER}:${PASSWORD}`).toString("base64") };
+    const prev = await fetch(cfg, { headers: auth });
+    const old = prev.ok ? await prev.json() : undefined;
+    await fetch(cfg, { method: "PUT", headers: auth, body: '"1"' });
+    try {
+      const c = new CouchDB(URL);
+      await c.login(USER, PASSWORD);
+      await new Promise((r) => setTimeout(r, 2500));
+      expect((await c.database(n).info()).db_name).toBe(n);
+    } finally {
+      if (old === undefined) await fetch(cfg, { method: "DELETE", headers: auth });
+      else await fetch(cfg, { method: "PUT", headers: auth, body: JSON.stringify(old) });
+    }
+  }, 15_000);
 });
+

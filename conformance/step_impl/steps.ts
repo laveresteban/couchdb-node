@@ -327,6 +327,110 @@ export default class Steps {
     eq(value?.id, docid);
   }
 
+  @Step("Follow the continuous changes feed with checkpoint <name> until document <docid>")
+  async followContinuousUntil(name: string, docid: string) {
+    const feed = db().follow({ feed: "continuous", checkpoint: name, heartbeat: 1000, batchSize: 1 });
+    for await (const row of feed) {
+      if (row.id === docid) feed.stop();
+    }
+  }
+
+  @Step("Following the continuous changes feed with checkpoint <name> next yields document <docid>")
+  async followContinuousNext(name: string, docid: string) {
+    const feed = db().follow({ feed: "continuous", checkpoint: name, heartbeat: 1000 });
+    const it = feed[Symbol.asyncIterator]();
+    const { value } = await it.next();
+    feed.stop();
+    await it.return?.();
+    eq(value?.id, docid);
+  }
+
+  // -- sync primitives
+  @Step("Revs diff for document <docid> with the remembered revision reports nothing missing")
+  async revsDiffNothingMissing(docid: string) {
+    eq(await db().revsDiff({ [docid]: [s.rev] }), {});
+  }
+
+  @Step("Revs diff for document <docid> with revision <rev> reports <missing> missing")
+  async revsDiffMissing(docid: string, rev: string, missing: string) {
+    eq((await db().revsDiff({ [docid]: [rev] }))[docid].missing, missing.split(","));
+  }
+
+  @Step("Bulk get documents <ids> with history returns <count> documents")
+  async bulkGetDocs(ids: string, count: string) {
+    const res = await db().bulkGet(ids.split(",").map((id) => ({ id })), { revs: true });
+    const docs = res.flatMap((r) => r.docs).filter((d: any) => d.ok).map((d: any) => d.ok);
+    eq(docs.length, Number(count));
+    ok(docs.every((d: any) => d._revisions), JSON.stringify(docs));
+  }
+
+  @Step("Bulk get history of document <docid> lists <count> revisions")
+  async bulkGetHistory(docid: string, count: string) {
+    const [res] = await db().bulkGet([{ id: docid }], { revs: true });
+    eq(res.docs[0].ok._revisions.ids.length, Number(count));
+  }
+
+  @Step("Bulk get of missing document <docid> reports <error>")
+  async bulkGetMissing(docid: string, error: string) {
+    const [res] = await db().bulkGet([{ id: docid }]);
+    eq(res.docs[0].error?.error, error);
+  }
+
+  @Step("Save local document <docid> with field <field> = <value>")
+  async saveLocal(docid: string, field: string, value: string) {
+    await db().putLocal(docid, { [field]: value });
+  }
+
+  @Step("Local document <docid> has field <field> = <value>")
+  async localHasField(docid: string, field: string, value: string) {
+    eq((await db().getLocal(docid))[field], value);
+  }
+
+  @Step("The changes feed lists no documents")
+  async changesEmpty() { eq((await db().changes()).results, []); }
+
+  @Step("Delete local document <docid>")
+  async deleteLocal(docid: string) { await db().deleteLocal(docid); }
+
+  @Step("Local document <docid> does not exist")
+  async localMissing(docid: string) {
+    try {
+      await db().getLocal(docid);
+    } catch (err) {
+      if (err instanceof NotFound) return;
+      throw err;
+    }
+    throw new Error(`_local/${docid} still exists`);
+  }
+
+  @Step("Write document <docid> at revision <rev> with field <field> = <value> without new edits")
+  async writeWithoutNewEdits(docid: string, rev: string, field: string, value: string) {
+    await db().bulkSave([{ _id: docid, _rev: rev, [field]: value }], { newEdits: false });
+  }
+
+  @Step("Document <docid> has <count> conflicts")
+  async conflictCount(docid: string, count: string) {
+    eq(((await db().get(docid, { conflicts: true }))._conflicts ?? []).length, Number(count));
+  }
+
+  @Step("The changes feed with all leaf revisions lists <count> revisions for document <docid>")
+  async changesAllLeaves(count: string, docid: string) {
+    const rows = (await db().changes({ style: "all_docs" })).results.filter((r) => r.id === docid);
+    ok(rows.length > 0, `no changes for ${docid}`);
+    eq(rows[rows.length - 1].changes?.length, Number(count));
+  }
+
+  @Step("Document <docid> with revision history lists <count> revisions")
+  async revisionHistory(docid: string, count: string) {
+    eq((await db().get(docid, { revs: true }))._revisions.ids.length, Number(count));
+  }
+
+  @Step("The changes feed filtered by field <field> = <value> lists documents <ids>")
+  async changesBySelector(field: string, value: string, ids: string) {
+    const got = (await db().changes({ selector: { [field]: value } })).results.map((r) => r.id);
+    eq(sorted(got), sorted(ids.split(",")));
+  }
+
   // -- security
   @Step("Set the database members to user <user>")
   async setMembers(user: string) { await db().setSecurity(undefined, { names: [user], roles: [] }); }
