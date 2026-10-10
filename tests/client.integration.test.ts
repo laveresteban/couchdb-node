@@ -84,5 +84,32 @@ describe.skipIf(!up)("CouchDB client", () => {
       else await fetch(cfg, { method: "PUT", headers: auth, body: JSON.stringify(old) });
     }
   }, 15_000);
+
+  it("server listings", async () => {
+    const n = uniqueName();
+    created.push(n);
+    await admin.createDatabase(n);
+    const res = await admin.dbsInfo([n, "no_such_db"]);
+    expect(res[0].info.db_name).toBe(n);
+    expect(res[1].error).toBe("not_found");
+    expect(Array.isArray(await admin.activeTasks())).toBe(true);
+    expect(Array.isArray((await admin.schedulerJobs()).jobs)).toBe(true);
+    expect(Array.isArray((await admin.schedulerDocs()).docs)).toBe(true);
+    expect((await admin.dbUpdates({ descending: true, limit: 1 })).last_seq).toBeDefined();
+  });
+
+  it("replicates with plain URLs", async () => {
+    const src = uniqueName();
+    const dst = uniqueName();
+    created.push(src, dst);
+    const db = await admin.createDatabase(src);
+    await db.bulkSave([{ i: 1 }, { i: 2 }]);
+    const u = new globalThis.URL(URL);
+    u.username = USER;
+    u.password = PASSWORD;
+    const base = u.toString().replace(/\/+$/, "");
+    await admin.replicate(`${base}/${src}`, `${base}/${dst}`, { createTarget: true });
+    expect((await admin.database(dst).info()).doc_count).toBe(2);
+  }, 15_000);
 });
 

@@ -1,6 +1,6 @@
 {
   "name": "couchdb-node",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "TypeScript SDK for Apache CouchDB",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",

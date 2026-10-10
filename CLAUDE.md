@@ -26,9 +26,10 @@ docker compose -f conformance/docker-compose.yml run --rm conformance
 
 ## Fixes still open
 
-Done in 0.6.0: regenerated client, continuous feed, abortable `stop()`,
-`sync.spec` + continuous conformance steps, `bulkSave` revs, `get()`
-`revs`/`latest`, snake_case options, session re-login, `replicationUrl`.
+Done in 0.6.0/0.7.0: regenerated client, continuous feed, abortable `stop()`,
+`sync.spec`, continuous and 0.7.0 conformance steps (46/46), `bulkSave` revs,
+`get()` `revs`/`latest`, snake_case options, session re-login,
+`replicationUrl`, `head`/ETag, maintenance and listing helpers.
 `scripts/conformance.sh` now fails on skipped scenarios.
 
 - `scripts/conformance.sh` runs `gauge install ts`, which needs network even
@@ -40,4 +41,5 @@ Done in 0.6.0: regenerated client, continuous feed, abortable `stop()`,
 - Browser support (no `getSetCookie`, CORS) or document Node-only.
 - Async-iterator paging helpers for `allDocs`/`find`.
 - Generic typed docs: `Database<T>`.
+- `has()` via `head()` instead of a full GET.
 - Attachment streaming (`ReadableStream` in/out).
