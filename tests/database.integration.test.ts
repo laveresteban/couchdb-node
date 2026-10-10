@@ -142,4 +142,65 @@ describe.skipIf(!up)("Database (live CouchDB)", () => {
       feed.stop();
     }
   });
+
+  it("bulkSave sets revisions on the docs it saved", async () => {
+    const db = await mkdb();
+    const docs: any[] = [{ _id: "a" }, { v: 1 }];
+    await db.bulkSave(docs);
+    expect(docs.every((d) => d._rev.startsWith("1-"))).toBe(true);
+    await db.bulkSave(docs); // same list again is an update, not a conflict
+    expect(docs.every((d) => d._rev.startsWith("2-"))).toBe(true);
+  });
+
+  it("replication primitives", async () => {
+    const db = await mkdb();
+    await db.save({ _id: "a", v: 1 });
+    const { _rev } = await db.update("a", (d) => ({ ...d, v: 2 }));
+    expect((await db.revsDiff({ a: [_rev, "9-x"] })).a.missing).toEqual(["9-x"]);
+
+    const res = await db.bulkGet([{ id: "a" }, { id: "zz" }], { revs: true });
+    expect(res[0].docs[0].ok.v).toBe(2);
+    expect(res[0].docs[0].ok._revisions.ids).toHaveLength(2);
+    expect(res[1].docs[0].error.error).toBe("not_found");
+
+    await db.bulkSave([{ _id: "x", _rev: "1-aaa", v: 1 }], { newEdits: false });
+    expect((await db.get("x"))._rev).toBe("1-aaa");
+    expect((await db.get("x", { revs: true }))._revisions.ids).toEqual(["aaa"]);
+
+    await db.putLocal("cp", { seq: "1" });
+    await db.deleteLocal("cp");
+    await expect(db.getLocal("cp")).rejects.toBeInstanceOf(NotFound);
+  });
+
+  it("find accepts CouchDB's snake_case options", async () => {
+    const db = await mkdb();
+    await db.bulkSave([{ v: 1 }, { v: 2 }]);
+    await db.createIndex(["v"], "v-idx", { ddoc: "idx" });
+    const res = await db.find({ v: { $gt: 0 } }, { use_index: ["idx", "v-idx"], sort: [{ v: "desc" }] });
+    expect(res.docs.map((d) => d.v)).toEqual([2, 1]);
+    expect(res.warning).toBeUndefined();
+  });
+
+  it("follow({ feed: 'continuous' }) streams live writes, filtered by selector", async () => {
+    const db = await mkdb();
+    const feed = db.follow({ feed: "continuous", selector: { t: 2 }, heartbeat: 1000 });
+    const it = feed[Symbol.asyncIterator]();
+    const next = it.next();
+    await db.bulkSave([{ _id: "a", t: 1 }, { _id: "b", t: 2 }]);
+    expect((await next).value.id).toBe("b");
+    feed.stop();
+    expect((await it.next()).done).toBe(true);
+  });
+
+  it("stop() ends a pending longpoll right away", async () => {
+    const db = await mkdb();
+    const feed = db.follow({ since: "now", timeout: 60_000 });
+    const started = Date.now();
+    const done = (async () => { for await (const _ of feed) { /* none */ } })();
+    await new Promise((r) => setTimeout(r, 200));
+    feed.stop();
+    await done;
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
 });
+

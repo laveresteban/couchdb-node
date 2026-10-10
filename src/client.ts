@@ -5,20 +5,32 @@ import { Database } from "./database";
 import { NotFound, translate } from "./errors";
 import type { Doc } from "./types";
 
+export interface CouchDBOptions {
+  /**
+   * How the CouchDB server reaches itself, for `replicate()` with bare
+   * database names. Defaults to the client URL; set it when the client and
+   * server see different hostnames (Docker, proxies).
+   */
+  replicationUrl?: string;
+}
+
 /** Server-level entry point. Holds one shared Configuration (basic auth + cookie session). */
 export class CouchDB {
   private readonly config: Configuration;
   private readonly basePath: string;
+  private readonly replicationUrl: string;
   private readonly username?: string;
   private readonly password?: string;
-  private readonly _session: { cookie?: string } = {};
+  private readonly _session: { cookie?: string; credentials?: { name: string; password: string } } = {};
   private readonly server: ServerApi;
   private readonly auth: AuthenticationApi;
   private readonly dbs: DatabasesApi;
   private readonly replication: ReplicationApi;
 
-  constructor(url = "http://localhost:5984", username?: string, password?: string) {
+  constructor(url = "http://localhost:5984", username?: string, password?: string, options: CouchDBOptions = {}) {
     this.basePath = url.replace(/\/+$/, "");
+    this.replicationUrl = (options.replicationUrl ?? url).replace(/\/+$/, "");
+    const basePath = this.basePath;
     this.username = username;
     this.password = password;
     const session = this._session;
@@ -32,14 +44,25 @@ export class CouchDB {
           return { url, init: { ...init, headers: { ...(init.headers as Record<string, string>), Cookie: session.cookie } } };
         },
         // CouchDB re-issues Set-Cookie to extend the session; keep the latest non-empty one.
-        async post({ response }) {
-          const h = response.headers;
-          const all = h.getSetCookie?.() ?? [h.get("set-cookie")];
-          for (const c of all) {
-            const kv = c?.split(";", 1)[0];
-            if (kv?.startsWith("AuthSession=") && kv.length > "AuthSession=".length) session.cookie = kv;
-          }
-          return response;
+        // If the session expired anyway, log in again once and retry the request.
+        // The login and retry use plain fetch, so a second 401 can't loop back here.
+        async post({ url, init, response }) {
+          keepCookie(session, response);
+          const creds = session.credentials;
+          if (response.status !== 401 || !creds || !session.cookie || url.endsWith("/_session")) return response;
+          await response.text().catch(() => "");
+          const login = await fetch(`${basePath}/_session`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(creds),
+          });
+          await login.text().catch(() => "");
+          if (!login.ok) return response;
+          keepCookie(session, login);
+          const retried = await fetch(url, {
+            ...init, headers: { ...(init.headers as Record<string, string>), Cookie: session.cookie! } });
+          keepCookie(session, retried);
+          return retried;
         },
       }],
     });
@@ -81,9 +104,11 @@ export class CouchDB {
     const header = h.getSetCookie?.()[0] ?? h.get("set-cookie");
     // Only replace the stored cookie once a new one was actually issued.
     if (header) this._session.cookie = header.split(";", 1)[0];
+    this._session.credentials = { name, password };
   }
 
   async logout(): Promise<void> {
+    this._session.credentials = undefined;
     await translate(() => this.auth.deleteSession());
     this._session.cookie = undefined;
   }
@@ -110,7 +135,7 @@ export class CouchDB {
   // -- replication
   private endpoint(x: string): Doc {
     if (x.includes("://")) return { url: x };
-    const ep: Doc = { url: `${this.basePath}/${encodeURIComponent(x)}` };
+    const ep: Doc = { url: `${this.replicationUrl}/${encodeURIComponent(x)}` };
     if (this.username) ep.auth = { basic: { username: this.username, password: this.password } };
     return ep;
   }
@@ -119,5 +144,14 @@ export class CouchDB {
   async replicate(source: string, target: string, options: Doc = {}): Promise<Doc> {
     const body: any = { source: this.endpoint(source), target: this.endpoint(target), ...options };
     return { ...(await translate(() => this.replication.postReplicate({ replicationRequest: body }))) };
+  }
+}
+
+function keepCookie(session: { cookie?: string }, response: Response): void {
+  const h = response.headers;
+  const all = h.getSetCookie?.() ?? [h.get("set-cookie")];
+  for (const c of all) {
+    const kv = c?.split(";", 1)[0];
+    if (kv?.startsWith("AuthSession=") && kv.length > "AuthSession=".length) session.cookie = kv;
   }
 }

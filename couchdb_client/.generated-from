@@ -1,4 +1,4 @@
-spec_version=0.3.0
-spec_sha=d06484d
-generator_sha=0ee43c6
+spec_version=0.6.0
+spec_sha=89d7238
+generator_sha=831009e
 openapi_generator=7.10.0

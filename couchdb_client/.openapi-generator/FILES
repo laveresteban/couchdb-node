@@ -1,6 +1,5 @@
 .gitignore
 .npmignore
-.openapi-generator-ignore
 README.md
 package.json
 src/apis/AttachmentsApi.ts
@@ -20,7 +19,14 @@ src/models/AllDocsQuery.ts
 src/models/AllDocsResult.ts
 src/models/AllDocsResultRowsInner.ts
 src/models/AllDocsResultRowsInnerValue.ts
+src/models/Attachment.ts
 src/models/BulkDocs.ts
+src/models/BulkGetRequest.ts
+src/models/BulkGetRequestDocsInner.ts
+src/models/BulkGetResult.ts
+src/models/BulkGetResultResultsInner.ts
+src/models/BulkGetResultResultsInnerDocsInner.ts
+src/models/BulkGetResultResultsInnerDocsInnerError.ts
 src/models/ChangesQuery.ts
 src/models/ChangesResult.ts
 src/models/ChangesResultResultsInner.ts
@@ -45,6 +51,9 @@ src/models/ReplicationRequest.ts
 src/models/ReplicationRequestSource.ts
 src/models/ReplicationRequestTarget.ts
 src/models/ReplicationResult.ts
+src/models/ReplicationResultHistoryInner.ts
+src/models/Revisions.ts
+src/models/RevsDiffResultValue.ts
 src/models/Security.ts
 src/models/SecurityMembers.ts
 src/models/ServerInformation.ts
