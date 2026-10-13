@@ -1,10 +1,20 @@
 name: release
+# Publishes only after the same CI (tests, conformance, drift check) passes on the tag.
 on:
   push:
     tags: ["v*"]
+
+permissions:
+  contents: read
+
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   npm:
+    needs: ci
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: npm
     permissions:
       contents: read
