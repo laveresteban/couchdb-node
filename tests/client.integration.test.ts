@@ -77,7 +77,22 @@ describe.skipIf(!up)("CouchDB client", () => {
     try {
       const c = new CouchDB(URL);
       await c.login(USER, PASSWORD);
-      await new Promise((r) => setTimeout(r, 2500));
+      // The client doesn't expose its cookie, so log in a second session right
+      // after it. That one expires no earlier, so once it is gone the client's
+      // cookie is too. Poll it instead of sleeping a fixed time.
+      const raw = await fetch(`${URL}/_session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: USER, password: PASSWORD }),
+      });
+      const rawCookie = raw.headers.get("set-cookie")!.split(";", 1)[0];
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        const s = await fetch(`${URL}/_session`, { headers: { Cookie: rawCookie } }).then((r) => r.json());
+        if (s.userCtx.name === null) break;
+        if (Date.now() > deadline) throw new Error("cookie never expired");
+        await new Promise((r) => setTimeout(r, 200));
+      }
       expect((await c.database(n).info()).db_name).toBe(n);
     } finally {
       if (old === undefined) await fetch(cfg, { method: "DELETE", headers: auth });
