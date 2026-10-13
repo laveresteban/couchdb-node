@@ -46,7 +46,7 @@ describe.skipIf(!up)("CouchDB client", () => {
     const res = await admin.replicate(a, b);
     expect(res.ok).toBe(true);
     expect((await admin.database(b).get("x"))._id).toBe("x");
-  });
+  }, 15_000);
 
   it("sessions: bad login keeps cookie unchanged; good login/logout", async () => {
     const c = new CouchDB(URL); // no basic auth: identity comes from the cookie only
