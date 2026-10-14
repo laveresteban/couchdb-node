@@ -8,7 +8,7 @@
     "dist"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "license": "Apache-2.0",
   "scripts": {
@@ -19,7 +19,7 @@
   },
   "devDependencies": {
     "@getgauge/cli": "^1.6.38",
-    "typescript": "^5.4.0",
-    "vitest": "^2.0.0"
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
   }
 }

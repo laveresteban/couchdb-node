@@ -24,7 +24,7 @@ jobs:
     with:
       language: node
       matrix-key: typescript
-      versions: '["18", "20", "22"]'
+      versions: '["20", "22"]'
       conformance-version: "20"
       install: npm ci && npm run build
       test: node scripts/sync-version.mjs --check && npm test
